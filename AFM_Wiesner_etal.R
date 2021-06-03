@@ -26,6 +26,7 @@ library(evobiR)
 library(lognorm)
 library(merTools)
 library(AICcmodavg)
+library(genefilter)
 
 K_long <- read.csv("/Users/susannewiesner/Downloads/AFM/IWGm_IWGb_final_halfhourly_data.csv")
 
@@ -928,9 +929,7 @@ K_long_a <- K_long_d %>%
                    LE_a = sum(LE_m, na.rm = T),
                    H_a = sum(H_m, na.rm = T),
                    Reco_a = sum(Reco_s, na.rm = T),
-                   ET_a = sum(ETs, na.rm = T),
                    ET_r = sum(ET_m, na.rm = T),
-                   ET_r2 = sum(ET_s, na.rm = T),
                    LUE_a= mean(LUE, na.rm = T),
                    WUE_a = mean(WUE, na.rm = T),
                    Rain_sauk = sum(rain_sauk, na.rm = T)*1000)
@@ -1731,6 +1730,53 @@ p_uM <- ggplot(NEE_agg, aes(as.Date(DateTime), NEE_f, group = Type))+
     scale_fill_manual(values = c("darkgoldenrod", "grey23"))
 
 #cowplot::save_plot("/Users/susannewiesner/Downloads/AFM/FigureA1.pdf",  p_uM, base_height = 7, base_width = 12)
+
+
+################# calculate Ustar threshold uncertainty ################
+results <- rbind(KC_long, KO_long)
+
+results <- results %>% 
+  mutate(
+    resid = ifelse(NEE_uStar_fqc == 0, NEE_uStar_orig - NEE_uStar_fall, NA )
+  )
+
+autoCorr <- computeEffectiveAutoCorr(results$resid)
+nEff <- computeEffectiveNumObs(results$resid, na.rm = TRUE)
+c( nEff = nEff, nObs = sum(is.finite(results$resid)))
+
+results %>% filter(NEE_uStar_fqc == 0) %>% summarise(
+  nRec = sum(is.finite(NEE_uStar_fsd))
+  , varMean = sum(NEE_uStar_fsd^2, na.rm = TRUE) / nRec / (!!nEff - 1)
+  , seMean = sqrt(varMean) 
+  , seMeanApprox = mean(NEE_uStar_fsd, na.rm = TRUE) / sqrt(!!nEff - 1)
+  ) %>% select(seMean, seMeanApprox)
+
+#################################################################################
+results <- results %>% mutate(
+  DateTime = results$DateTime
+  , DoY = as.POSIXlt(DateTime - 15*60)$yday # midnight belongs to the previous
+)
+
+results$DoY <- as.character(results$DoY)
+results <- tidyr::separate(results, DateTime, into = c("Date","Time"), sep = " ", extra = "merge", remove=F)
+results <- tidyr::separate(results, Date, into = c("Year","Month", "Day"), sep = "-", extra = "merge", remove=F)
+
+########################### Systematic Uncertainty ############################3
+uStarSuffixes <- c("uStar", "U05", "U50", "U95")
+
+NEEAggCO2 <- results %>% dplyr::group_by(Year, Type) %>%
+  dplyr::summarise(
+    NEE_f = mean(NEE_uStar_f),
+    NEE_f05 = mean(NEE_U05_f),
+    NEE_f50 = mean(NEE_U50_f),
+    NEE_f95 = mean(NEE_U95_f)
+  )
+
+NEEAggCO2$NEE_m <- rowMeans(cbind(NEEAggCO2$NEE_f, NEEAggCO2$NEE_f05, NEEAggCO2$NEE_f50, NEEAggCO2$NEE_f95), na.rm=TRUE) 
+NEEAggCO2$NEE_sd <- rowSds(cbind(NEEAggCO2$NEE_f, NEEAggCO2$NEE_f05, NEEAggCO2$NEE_f50, NEEAggCO2$NEE_f95), na.rm=TRUE) 
+NEEAggCO2$NEE_var <- rowVars(cbind(NEEAggCO2$NEE_f, NEEAggCO2$NEE_f05, NEEAggCO2$NEE_f50, NEEAggCO2$NEE_f95), na.rm=TRUE)
+
+#write.csv(NEEAggCO2, "/Users/susannewiesner/Downloads/AFM/NEE_annual_uncertainty_IWGm_IWGb.csv")
 
 ################## +++++++++++++++++ biomass model +++++++++++++++++ ###################
 K_bio <- read.csv("/Users/susannewiesner/Documents/Kernza/data/Kernza_biomass.csv")
